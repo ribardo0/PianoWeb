@@ -25,9 +25,12 @@ button { border: 0; font: inherit; cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .4; }
 .icon-button { padding: 7px; color: #77736b; background: transparent; font-size: 16px; }
 .play-button { display: flex; align-items: center; gap: 9px; padding: 9px 18px; border-radius: 4px; color: #fff; background: #ba4d3c; font-size: 13px; }
-.mode-control, .tempo-control { display: flex; align-items: center; gap: 8px; color: #8a857c; font: 11px "DM Mono", monospace; }
+.mode-control, .tempo-control, .measure-control { display: flex; align-items: center; gap: 8px; color: #8a857c; font: 11px "DM Mono", monospace; }
 .mode-control select { max-width: 150px; padding: 6px 24px 6px 8px; border: 1px solid #ded9d0; border-radius: 4px; color: #282622; background: #fffdf8; font: inherit; }
 .mode-control select:disabled { opacity: .45; }
+.measure-control input { width: 62px; padding: 6px 8px; border: 1px solid #ded9d0; border-radius: 4px; color: #282622; background: #fffdf8; font: inherit; }
+.measure-control button { padding: 6px 9px; border-radius: 4px; color: #fff; background: #ba4d3c; font: inherit; }
+.measure-control input:disabled { opacity: .45; }
 input[type="range"] { width: 90px; accent-color: #ba4d3c; }
 output { min-width: 25px; color: #282622; }
 .score-frame { position: relative; min-height: 540px; padding: 35px 24px; }

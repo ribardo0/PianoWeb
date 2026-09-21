@@ -27,12 +27,18 @@ app.innerHTML = `
         </div>
         <div class="controls">
           <button id="rewind" class="icon-button" title="Revenir au début" disabled>↶</button>
+          <form id="measure-jump-form" class="measure-control">
+            <label for="measure-jump">Mesure</label>
+            <input id="measure-jump" type="number" min="1" value="1" disabled />
+            <span id="measure-total">/ 0</span>
+            <button id="measure-jump-button" type="submit" disabled>Aller</button>
+          </form>
           <button id="play" class="play-button" disabled><span>▶</span><span id="play-label">Lire</span></button>
           <button id="stop" class="icon-button" title="Arrêter" disabled>■</button>
           <label class="mode-control">Mode
             <select id="score-mode">
-              <option value="moving-score">Suivi horizontal</option>
               <option value="moving-cursor">Suivi classique</option>
+              <option value="moving-score">Suivi horizontal</option>
             </select>
           </label>
           <label class="tempo-control">Tempo <input id="tempo" type="range" min="40" max="180" value="100" /><output id="tempo-value">100</output></label>
@@ -61,6 +67,10 @@ const els = {
   playLabel: document.querySelector("#play-label"),
   stop: document.querySelector("#stop"),
   rewind: document.querySelector("#rewind"),
+  measureJumpForm: document.querySelector("#measure-jump-form"),
+  measureJump: document.querySelector("#measure-jump"),
+  measureJumpButton: document.querySelector("#measure-jump-button"),
+  measureTotal: document.querySelector("#measure-total"),
   mode: document.querySelector("#score-mode"),
   tempo: document.querySelector("#tempo"),
   tempoValue: document.querySelector("#tempo-value"),
@@ -111,10 +121,11 @@ let playbackStartBeat = 0;
 let playbackStartDelay = 0.1;
 let playbackSecondsPerBeat = 0;
 let currentScoreOffsetX = 0;
-let currentScoreMode = SCORE_MODES.movingScore;
+let currentScoreMode = SCORE_MODES.movingCursor;
 let loadedScoreXml = "";
 let loadedScoreName = "";
 let resizeTimer = 0;
+let currentMeasureIndex = 0;
 
 els.file.addEventListener("change", async ({ target }) => {
   const file = target.files?.[0];
@@ -144,6 +155,16 @@ els.rewind.addEventListener("click", () => {
   selectedStartBeat = 0;
   setCursorPosition(0);
   setMeasure(0);
+});
+els.measureJumpForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  goToMeasure(Number(els.measureJump.value) - 1);
+});
+els.measureJump.addEventListener("input", ({ target }) => {
+  target.value = clampMeasureInput(target.value);
+});
+els.measureJump.addEventListener("blur", ({ target }) => {
+  if (!target.value) target.value = String(currentMeasureIndex + 1);
 });
 els.tempo.addEventListener("input", ({ target }) => {
   els.tempoValue.textContent = target.value;
@@ -190,7 +211,11 @@ async function loadScore(xml, name) {
   await renderLoadedScore();
   els.empty.hidden = true;
   els.fileName.textContent = name;
-  [els.play, els.stop, els.rewind].forEach((button) => { button.disabled = false; });
+  [els.play, els.stop, els.rewind, els.measureJump, els.measureJumpButton].forEach((control) => {
+    control.disabled = false;
+  });
+  els.measureJump.max = String(scoreData.measures.length);
+  els.measureTotal.textContent = `/ ${scoreData.measures.length}`;
   setMeasure(0);
 }
 
@@ -429,7 +454,32 @@ function setPlaying(value) {
 
 function setMeasure(index) {
   const total = scoreData?.measures.length || 0;
-  els.measureStatus.textContent = total ? `Mesure ${Math.min(index + 1, total)} / ${total}` : "Prêt à jouer";
+  currentMeasureIndex = total ? Math.max(0, Math.min(index, total - 1)) : 0;
+  if (els.measureJump) {
+    els.measureJump.value = total ? String(currentMeasureIndex + 1) : "1";
+    els.measureJump.max = String(Math.max(total, 1));
+  }
+  if (els.measureTotal) els.measureTotal.textContent = `/ ${total}`;
+  els.measureStatus.textContent = total ? `Mesure ${currentMeasureIndex + 1} / ${total}` : "Prêt à jouer";
+}
+
+function goToMeasure(index) {
+  if (!scoreData?.measures.length || !cursorTimeline.length) return;
+  const measureIndex = Math.max(0, Math.min(index, scoreData.measures.length - 1));
+  const measure = scoreData.measures[measureIndex];
+  if (isPlaying) stopPlayback();
+  selectedStartBeat = measure.start;
+  const position = cursorTimeline.findIndex(({ time }) => time >= measure.start);
+  setCursorPosition(position < 0 ? cursorTimeline.length - 1 : position);
+  setMeasure(measureIndex);
+}
+
+function clampMeasureInput(value) {
+  const total = scoreData?.measures.length || 0;
+  if (!total || value === "") return "";
+  const requestedMeasure = Number(value);
+  if (!Number.isFinite(requestedMeasure)) return String(currentMeasureIndex + 1);
+  return String(Math.max(1, Math.min(Math.trunc(requestedMeasure), total)));
 }
 
 function setCursorPosition(position) {
