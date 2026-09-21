@@ -56,8 +56,8 @@ app.innerHTML = `
           <p>Choisissez un fichier MusicXML pour commencer.</p>
         </div>
         <div id="progress-cursor" aria-hidden="true"></div>
-        <div id="loop-start-marker" class="loop-marker loop-start-marker" aria-hidden="true"><span>Début</span></div>
-        <div id="loop-end-marker" class="loop-marker loop-end-marker" aria-hidden="true"><span>Fin</span></div>
+        <div id="loop-start-marker" class="loop-marker loop-start-marker" aria-hidden="true" hidden><span>Début</span></div>
+        <div id="loop-end-marker" class="loop-marker loop-end-marker" aria-hidden="true" hidden><span>Fin</span></div>
         <div id="score"></div>
       </div>
     </section>
@@ -632,7 +632,12 @@ function renderProgressCursor(time) {
 }
 
 function renderLoopMarkers() {
-  if (!els.scoreFrame || !cursorTimeline.length) return;
+  if (!els.scoreFrame) return;
+  if (!cursorTimeline.length) {
+    els.loopStartMarker.hidden = true;
+    els.loopEndMarker.hidden = true;
+    return;
+  }
   const frameBounds = els.scoreFrame.getBoundingClientRect();
   const frameLeft = frameBounds.left + window.scrollX;
   const frameTop = frameBounds.top + window.scrollY;
