@@ -38,6 +38,7 @@ app.innerHTML = `
           <h2>Votre partition apparaîtra ici</h2>
           <p>Choisissez un fichier MusicXML pour commencer.</p>
         </div>
+        <div id="progress-cursor" aria-hidden="true"></div>
         <div id="score"></div>
       </div>
     </section>
@@ -58,6 +59,7 @@ const els = {
   tempoValue: document.querySelector("#tempo-value"),
   measureStatus: document.querySelector("#measure-status"),
   toolbar: document.querySelector(".toolbar"),
+  progressCursor: document.querySelector("#progress-cursor"),
 };
 
 els.score.addEventListener("click", (event) => {
@@ -89,6 +91,10 @@ let cursorTimeline = [];
 let currentCursorPosition = 0;
 let selectedStartBeat = 0;
 let isPlaying = false;
+let progressAnimationFrame = 0;
+let playbackStartBeat = 0;
+let playbackStartDelay = 0.1;
+let playbackSecondsPerBeat = 0;
 
 els.file.addEventListener("change", async ({ target }) => {
   const file = target.files?.[0];
@@ -134,7 +140,7 @@ async function loadScore(xml, name) {
     drawTitle: true,
     drawingParameters: "default",
     followCursor: false,
-    cursorsOptions: [{ type: 0, color: "#d45b46", alpha: 0.32, follow: false }],
+    cursorsOptions: [{ type: 0, color: "#d45b46", alpha: 0, follow: false }],
   });
   await osmd.load(xml);
   osmd.render();
@@ -143,6 +149,7 @@ async function loadScore(xml, name) {
   currentCursorPosition = 0;
   scoreData = parseMusicXml(xml);
   cursorTimeline = buildCursorTimeline();
+  renderProgressCursor(0);
   selectedStartBeat = 0;
   if (scoreData.tempo) {
     const tempo = Math.max(40, Math.min(180, Math.round(scoreData.tempo)));
@@ -257,14 +264,13 @@ function schedulePlayback(startBeat = 0) {
       }, startDelay + (measure.start - startBeat) * secondsPerBeat);
     }
   });
-  cursorTimeline.filter(({ time }) => time >= startBeat).forEach(({ time, position }) => {
-    Tone.Transport.schedule((audioTime) => {
-      Tone.Draw.schedule(() => setCursorPosition(position), audioTime);
-    }, startDelay + (time - startBeat) * secondsPerBeat);
-  });
+  playbackStartBeat = startBeat;
+  playbackStartDelay = startDelay;
+  playbackSecondsPerBeat = secondsPerBeat;
   Tone.Transport.schedule((audioTime) => {
     Tone.Draw.schedule(() => {
       stopPlayback();
+      selectedStartBeat = 0;
       setMeasure(0);
       setCursorPosition(0);
     }, audioTime);
@@ -291,6 +297,7 @@ async function startPlayback(startBeat = 0) {
     schedulePlayback(startBeat);
     Tone.Transport.start();
     setPlaying(true);
+    animateProgressCursor();
   } catch (error) {
     els.measureStatus.textContent = "Le navigateur bloque l’audio";
     console.error("Impossible de démarrer la lecture audio", error);
@@ -318,6 +325,8 @@ function buildCursorTimeline() {
         position,
         x: bounds ? bounds.left + window.scrollX : 0,
         y: bounds ? bounds.top + window.scrollY : 0,
+        width: bounds?.width || 2,
+        height: bounds?.height || 0,
       });
       seenTimes.add(timeKey);
     }
@@ -340,6 +349,10 @@ function stopPlayback() {
 
 function setPlaying(value) {
   isPlaying = value;
+  if (!value && progressAnimationFrame) {
+    cancelAnimationFrame(progressAnimationFrame);
+    progressAnimationFrame = 0;
+  }
   els.toolbar.classList.toggle("is-floating", value);
   els.playLabel.textContent = value ? "Pause" : "Lire";
   els.play.querySelector("span").textContent = value ? "Ⅱ" : "▶";
@@ -361,13 +374,65 @@ function setCursorPosition(position) {
     currentCursorPosition += 1;
   }
   osmd.cursor.show();
+  renderProgressCursor(cursorTimeline[position]?.time ?? 0);
   keepCursorVisible();
+}
+
+function animateProgressCursor() {
+  if (!isPlaying) return;
+  const elapsedSeconds = Math.max(0, Tone.Transport.seconds - playbackStartDelay);
+  const currentBeat = playbackStartBeat + elapsedSeconds / playbackSecondsPerBeat;
+  selectedStartBeat = Math.min(currentBeat, scoreData.duration);
+  renderProgressCursor(currentBeat);
+  keepProgressCursorVisible();
+  progressAnimationFrame = requestAnimationFrame(animateProgressCursor);
+}
+
+function renderProgressCursor(time) {
+  if (!els.progressCursor || !cursorTimeline.length) return;
+  const frameBounds = document.querySelector(".score-frame").getBoundingClientRect();
+  const first = cursorTimeline[0];
+  const last = cursorTimeline[cursorTimeline.length - 1];
+  let previous = first;
+  let next = first;
+
+  if (time >= last.time) {
+    previous = last;
+    next = last;
+  } else {
+    next = cursorTimeline.find((point) => point.time >= time) || last;
+    previous = cursorTimeline[Math.max(0, cursorTimeline.indexOf(next) - 1)];
+  }
+
+  const span = next.time - previous.time;
+  const ratio = span > 0 ? Math.max(0, Math.min(1, (time - previous.time) / span)) : 0;
+  const left = previous.x + (next.x - previous.x) * ratio - (frameBounds.left + window.scrollX);
+  const top = previous.y + (next.y - previous.y) * ratio - (frameBounds.top + window.scrollY);
+  const height = previous.height + (next.height - previous.height) * ratio;
+  const width = Math.max(2, previous.width + (next.width - previous.width) * ratio);
+
+  Object.assign(els.progressCursor.style, {
+    transform: `translate(${left}px, ${top}px)`,
+    width: `${width}px`,
+    height: `${height}px`,
+  });
 }
 
 function keepCursorVisible() {
   const cursorElement = osmd?.cursor?.cursorElement;
   if (!cursorElement) return;
   const bounds = cursorElement.getBoundingClientRect();
+  keepBoundsVisible(bounds);
+}
+
+function keepProgressCursorVisible() {
+  if (!els.progressCursor) return;
+  const bounds = els.progressCursor.getBoundingClientRect();
+  keepBoundsVisible(bounds);
+}
+
+function keepBoundsVisible(bounds) {
+  if (!bounds.height) return;
   const margin = Math.min(window.innerHeight * 0.25, 180);
   const isOutsideViewport = bounds.top < margin || bounds.bottom > window.innerHeight - margin;
   if (isOutsideViewport) {

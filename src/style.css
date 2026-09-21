@@ -30,6 +30,7 @@ input[type="range"] { width: 90px; accent-color: #ba4d3c; }
 output { min-width: 25px; color: #282622; }
 .score-frame { position: relative; min-height: 540px; padding: 35px 24px; }
 #score { width: 100%; }
+#progress-cursor { position: absolute; z-index: 2; top: 0; left: 0; background: linear-gradient(90deg, #d45b4600 0%, #d45b4652 18%, #d45b4652 82%, #d45b4600 100%); pointer-events: none; transform-origin: top left; }
 #empty-state { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; color: #9b968d; text-align: center; }
 #empty-state[hidden] { display: none; }
 .music-mark { margin-bottom: 14px; color: #c9c3b9; font: 72px "Playfair Display", serif; }
