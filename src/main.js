@@ -33,6 +33,11 @@ app.innerHTML = `
             <span id="measure-total">/ 0</span>
             <button id="measure-jump-button" type="submit" disabled>Aller</button>
           </form>
+          <div class="loop-controls" aria-label="Boucle de lecture">
+            <button id="loop-start" type="button" title="Définir le début de la boucle" disabled>Début</button>
+            <button id="loop-end" type="button" title="Définir la fin de la boucle" disabled>Fin</button>
+            <button id="clear-loop" type="button" title="Supprimer les repères de boucle" disabled>Supprimer la boucle</button>
+          </div>
           <button id="play" class="play-button" disabled><span>▶</span><span id="play-label">Lire</span></button>
           <button id="stop" class="icon-button" title="Arrêter" disabled>■</button>
           <label class="mode-control">Mode
@@ -51,6 +56,8 @@ app.innerHTML = `
           <p>Choisissez un fichier MusicXML pour commencer.</p>
         </div>
         <div id="progress-cursor" aria-hidden="true"></div>
+        <div id="loop-start-marker" class="loop-marker loop-start-marker" aria-hidden="true"><span>Début</span></div>
+        <div id="loop-end-marker" class="loop-marker loop-end-marker" aria-hidden="true"><span>Fin</span></div>
         <div id="score"></div>
       </div>
     </section>
@@ -71,6 +78,9 @@ const els = {
   measureJump: document.querySelector("#measure-jump"),
   measureJumpButton: document.querySelector("#measure-jump-button"),
   measureTotal: document.querySelector("#measure-total"),
+  loopStart: document.querySelector("#loop-start"),
+  loopEnd: document.querySelector("#loop-end"),
+  clearLoop: document.querySelector("#clear-loop"),
   mode: document.querySelector("#score-mode"),
   tempo: document.querySelector("#tempo"),
   tempoValue: document.querySelector("#tempo-value"),
@@ -78,6 +88,8 @@ const els = {
   toolbar: document.querySelector(".toolbar"),
   scoreFrame: document.querySelector(".score-frame"),
   progressCursor: document.querySelector("#progress-cursor"),
+  loopStartMarker: document.querySelector("#loop-start-marker"),
+  loopEndMarker: document.querySelector("#loop-end-marker"),
 };
 
 const FIXED_CURSOR_RATIO = 0.36;
@@ -126,6 +138,8 @@ let loadedScoreXml = "";
 let loadedScoreName = "";
 let resizeTimer = 0;
 let currentMeasureIndex = 0;
+let loopStartBeat = null;
+let loopEndBeat = null;
 
 els.file.addEventListener("change", async ({ target }) => {
   const file = target.files?.[0];
@@ -156,6 +170,9 @@ els.rewind.addEventListener("click", () => {
   setCursorPosition(0);
   setMeasure(0);
 });
+els.loopStart.addEventListener("click", () => setLoopPoint("start"));
+els.loopEnd.addEventListener("click", () => setLoopPoint("end"));
+els.clearLoop.addEventListener("click", clearLoop);
 els.measureJumpForm.addEventListener("submit", (event) => {
   event.preventDefault();
   goToMeasure(Number(els.measureJump.value) - 1);
@@ -208,10 +225,11 @@ async function loadScore(xml, name) {
     els.tempoValue.textContent = tempo;
   }
   selectedStartBeat = 0;
+  clearLoop();
   await renderLoadedScore();
   els.empty.hidden = true;
   els.fileName.textContent = name;
-  [els.play, els.stop, els.rewind, els.measureJump, els.measureJumpButton].forEach((control) => {
+  [els.play, els.stop, els.rewind, els.measureJump, els.measureJumpButton, els.loopStart, els.loopEnd].forEach((control) => {
     control.disabled = false;
   });
   els.measureJump.max = String(scoreData.measures.length);
@@ -234,6 +252,7 @@ async function renderLoadedScore() {
   const position = cursorTimeline.findIndex(({ time }) => time >= selectedStartBeat);
   setCursorPosition(position < 0 ? 0 : position);
   renderProgressCursor(selectedStartBeat);
+  renderLoopMarkers();
   els.fileName.textContent = loadedScoreName;
 }
 
@@ -339,35 +358,46 @@ function schedulePlayback(startBeat = 0) {
   scheduledEvents = [];
   const secondsPerBeat = 60 / Tone.Transport.bpm.value;
   const startDelay = 0.1;
+  const loopEnabled = hasLoop();
+  const regionEndBeat = loopEnabled ? loopEndBeat : scoreData.duration;
+  const regionStartBeat = loopEnabled ? loopStartBeat : startBeat;
+  const playbackDuration = Math.max(0, regionEndBeat - regionStartBeat);
+
   scoreData.measures.forEach((measure) => {
     measure.notes.forEach((note) => {
-      if (note.time + note.duration <= startBeat) return;
-      const noteStart = Math.max(note.time, startBeat);
+      if (note.time + note.duration <= regionStartBeat || note.time >= regionEndBeat) return;
+      const noteStart = Math.max(note.time, regionStartBeat);
+      const noteEnd = Math.min(note.time + note.duration, regionEndBeat);
       scheduledEvents.push(Tone.Transport.schedule((time) => {
         piano.triggerAttackRelease(
           Tone.Frequency(note.pitch, "midi"),
-          (note.duration - Math.max(0, startBeat - note.time)) * secondsPerBeat,
+          (noteEnd - noteStart) * secondsPerBeat,
           time,
         );
-      }, startDelay + (noteStart - startBeat) * secondsPerBeat));
+      }, startDelay + (noteStart - regionStartBeat) * secondsPerBeat));
     });
-    if (measure.start >= startBeat) {
+    if (measure.start >= regionStartBeat && measure.start < regionEndBeat) {
       Tone.Transport.schedule((audioTime) => {
         Tone.Draw.schedule(() => setMeasure(measure.index), audioTime);
-      }, startDelay + (measure.start - startBeat) * secondsPerBeat);
+      }, startDelay + (measure.start - regionStartBeat) * secondsPerBeat);
     }
   });
-  playbackStartBeat = startBeat;
+  Tone.Transport.loop = loopEnabled;
+  Tone.Transport.loopStart = startDelay;
+  Tone.Transport.loopEnd = startDelay + playbackDuration * secondsPerBeat;
+  playbackStartBeat = regionStartBeat;
   playbackStartDelay = startDelay;
   playbackSecondsPerBeat = secondsPerBeat;
-  Tone.Transport.schedule((audioTime) => {
-    Tone.Draw.schedule(() => {
-      stopPlayback();
-      selectedStartBeat = 0;
-      setMeasure(0);
-      setCursorPosition(0);
-    }, audioTime);
-  }, startDelay + Math.max(0, scoreData.duration - startBeat) * secondsPerBeat);
+  if (!loopEnabled) {
+    Tone.Transport.schedule((audioTime) => {
+      Tone.Draw.schedule(() => {
+        stopPlayback();
+        selectedStartBeat = 0;
+        setMeasure(0);
+        setCursorPosition(0);
+      }, audioTime);
+    }, startDelay + playbackDuration * secondsPerBeat);
+  }
 }
 
 async function startPlayback(startBeat = 0) {
@@ -385,9 +415,10 @@ async function startPlayback(startBeat = 0) {
       pianoReady = Tone.loaded();
     }
     await pianoReady;
-    const initialPosition = cursorTimeline.findIndex(({ time }) => time >= startBeat);
+    const playbackStart = hasLoop() ? loopStartBeat : startBeat;
+    const initialPosition = cursorTimeline.findIndex(({ time }) => time >= playbackStart);
     setCursorPosition(initialPosition < 0 ? 0 : initialPosition);
-    schedulePlayback(startBeat);
+    schedulePlayback(playbackStart);
     Tone.Transport.start();
     setPlaying(true);
     animateProgressCursor();
@@ -435,6 +466,7 @@ function buildCursorTimeline() {
 function stopPlayback() {
   Tone.Transport.stop();
   Tone.Transport.cancel();
+  Tone.Transport.loop = false;
   Tone.Draw.cancel();
   scheduledEvents = [];
   setPlaying(false);
@@ -450,6 +482,7 @@ function setPlaying(value) {
   els.toolbar.classList.toggle("is-floating", value);
   els.playLabel.textContent = value ? "Pause" : "Lire";
   els.play.querySelector("span").textContent = value ? "Ⅱ" : "▶";
+  updateLoopControls();
 }
 
 function setMeasure(index) {
@@ -472,6 +505,61 @@ function goToMeasure(index) {
   const position = cursorTimeline.findIndex(({ time }) => time >= measure.start);
   setCursorPosition(position < 0 ? cursorTimeline.length - 1 : position);
   setMeasure(measureIndex);
+}
+
+function setLoopPoint(point) {
+  if (!scoreData) return;
+  const beat = selectedStartBeat;
+
+  if (point === "start") {
+    loopStartBeat = beat;
+    if (loopEndBeat !== null && loopEndBeat <= beat) loopEndBeat = null;
+  } else {
+    if (loopStartBeat === null) {
+      els.measureStatus.textContent = "Définissez d'abord le début de la boucle";
+      return;
+    }
+    const endBeat = cursorTimeline.find(({ time }) => time > beat)?.time ?? scoreData.duration;
+    if (endBeat <= loopStartBeat) {
+      els.measureStatus.textContent = "La fin doit être après le début de la boucle";
+      return;
+    }
+    loopEndBeat = endBeat;
+  }
+
+  updateLoopControls();
+}
+
+function clearLoop() {
+  loopStartBeat = null;
+  loopEndBeat = null;
+  updateLoopControls();
+}
+
+function hasLoop() {
+  return loopStartBeat !== null && loopEndBeat !== null && loopEndBeat > loopStartBeat;
+}
+
+function getMeasureNumberAtBeat(beat) {
+  const measure = scoreData?.measures.find((item) => beat >= item.start && beat < item.start + item.length);
+  return measure ? measure.index + 1 : 1;
+}
+
+function updateLoopControls() {
+  const startLabel = loopStartBeat === null ? "Début" : `Début M${getMeasureNumberAtBeat(loopStartBeat)}`;
+  const endLabel = loopEndBeat === null ? "Fin" : `Fin M${getMeasureNumberAtBeat(Math.max(0, loopEndBeat - 1e-6))}`;
+  els.loopStart.textContent = startLabel;
+  els.loopEnd.textContent = endLabel;
+  els.loopStart.classList.toggle("is-set", loopStartBeat !== null);
+  els.loopEnd.classList.toggle("is-set", loopEndBeat !== null);
+  const controlsDisabled = !scoreData || isPlaying;
+  els.loopStart.disabled = controlsDisabled;
+  els.loopEnd.disabled = controlsDisabled;
+  els.clearLoop.disabled = controlsDisabled || (loopStartBeat === null && loopEndBeat === null);
+  if (hasLoop()) {
+    els.measureStatus.textContent = `Boucle : mesures ${getMeasureNumberAtBeat(loopStartBeat)} à ${getMeasureNumberAtBeat(Math.max(0, loopEndBeat - 1e-6))}`;
+  }
+  renderLoopMarkers();
 }
 
 function clampMeasureInput(value) {
@@ -500,7 +588,10 @@ function setCursorPosition(position) {
 function animateProgressCursor() {
   if (!isPlaying) return;
   const elapsedSeconds = Math.max(0, Tone.Transport.seconds - playbackStartDelay);
-  const currentBeat = playbackStartBeat + elapsedSeconds / playbackSecondsPerBeat;
+  const loopDuration = hasLoop() ? loopEndBeat - loopStartBeat : 0;
+  const currentBeat = hasLoop() && loopDuration > 0
+    ? loopStartBeat + (elapsedSeconds / playbackSecondsPerBeat) % loopDuration
+    : playbackStartBeat + elapsedSeconds / playbackSecondsPerBeat;
   selectedStartBeat = Math.min(currentBeat, scoreData.duration);
   renderProgressCursor(currentBeat);
   keepProgressCursorVisible();
@@ -521,6 +612,7 @@ function renderProgressCursor(time) {
       width: `${point.width}px`,
       height: `${point.height}px`,
     });
+    renderLoopMarkers();
     return;
   }
 
@@ -535,6 +627,30 @@ function renderProgressCursor(time) {
     transform: `translate(${fixedLeft}px, ${point.y - frameTop}px)`,
     width: `${point.width}px`,
     height: `${point.height}px`,
+  });
+  renderLoopMarkers();
+}
+
+function renderLoopMarkers() {
+  if (!els.scoreFrame || !cursorTimeline.length) return;
+  const frameBounds = els.scoreFrame.getBoundingClientRect();
+  const frameLeft = frameBounds.left + window.scrollX;
+  const frameTop = frameBounds.top + window.scrollY;
+
+  [
+    [els.loopStartMarker, loopStartBeat],
+    [els.loopEndMarker, loopEndBeat],
+  ].forEach(([marker, beat]) => {
+    if (!marker) return;
+    marker.hidden = beat === null;
+    if (beat === null) return;
+
+    const point = interpolateTimelinePoint(beat);
+    const scoreOffset = currentScoreMode === SCORE_MODES.movingScore ? currentScoreOffsetX : 0;
+    Object.assign(marker.style, {
+      transform: `translate(${point.x + scoreOffset - frameLeft}px, ${point.y - frameTop}px)`,
+      height: `${Math.max(point.height, 36)}px`,
+    });
   });
 }
 

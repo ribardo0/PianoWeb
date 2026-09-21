@@ -31,6 +31,10 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .measure-control input { width: 62px; padding: 6px 8px; border: 1px solid #ded9d0; border-radius: 4px; color: #282622; background: #fffdf8; font: inherit; }
 .measure-control button { padding: 6px 9px; border-radius: 4px; color: #fff; background: #ba4d3c; font: inherit; }
 .measure-control input:disabled { opacity: .45; }
+.loop-controls { display: flex; align-items: center; gap: 4px; }
+.loop-controls button { padding: 6px 8px; border: 1px solid #ded9d0; border-radius: 4px; color: #77736b; background: #fffdf8; font: 11px "DM Mono", monospace; }
+.loop-controls button.is-set { border-color: #ba4d3c; color: #9e3f31; background: #fcedea; }
+.loop-controls #clear-loop { color: #9a584e; }
 input[type="range"] { width: 90px; accent-color: #ba4d3c; }
 output { min-width: 25px; color: #282622; }
 .score-frame { position: relative; min-height: 540px; padding: 35px 24px; }
@@ -39,6 +43,13 @@ output { min-width: 25px; color: #282622; }
 .score-frame.is-moving-score #score { width: max-content; min-width: 100%; will-change: transform; }
 .score-frame.is-moving-score #score svg { display: block; overflow: visible; }
 #progress-cursor { position: absolute; z-index: 2; top: 0; left: 0; background: linear-gradient(90deg, #d45b4600 0%, #d45b4652 18%, #d45b4652 82%, #d45b4600 100%); pointer-events: none; transform-origin: top left; }
+.loop-marker { position: absolute; z-index: 3; top: 0; left: 0; width: 0; min-height: 36px; border-left: 2px dashed currentColor; color: #287a66; pointer-events: none; transform-origin: top left; }
+.loop-marker[hidden] { display: none; }
+.loop-marker::before { content: ""; position: absolute; top: 0; left: -2px; width: 8px; height: 8px; border-top: 2px solid currentColor; border-left: 2px solid currentColor; }
+.loop-marker span { position: absolute; top: -19px; left: 3px; color: currentColor; background: transparent; font: 700 9px "DM Mono", monospace; line-height: 1; text-shadow: -1px -1px 0 #fcfbf8, 1px -1px 0 #fcfbf8, -1px 1px 0 #fcfbf8, 1px 1px 0 #fcfbf8; text-transform: uppercase; white-space: nowrap; }
+.loop-end-marker { color: #a24539; }
+.loop-end-marker::before { right: -2px; left: auto; border-right: 2px solid currentColor; border-left: 0; }
+.loop-end-marker span { right: 3px; left: auto; }
 #empty-state { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; color: #9b968d; text-align: center; }
 #empty-state[hidden] { display: none; }
 .music-mark { margin-bottom: 14px; color: #c9c3b9; font: 72px "Playfair Display", serif; }
