@@ -29,6 +29,12 @@ app.innerHTML = `
           <button id="rewind" class="icon-button" title="Revenir au début" disabled>↶</button>
           <button id="play" class="play-button" disabled><span>▶</span><span id="play-label">Lire</span></button>
           <button id="stop" class="icon-button" title="Arrêter" disabled>■</button>
+          <label class="mode-control">Mode
+            <select id="score-mode">
+              <option value="moving-score">Suivi horizontal</option>
+              <option value="moving-cursor">Suivi classique</option>
+            </select>
+          </label>
           <label class="tempo-control">Tempo <input id="tempo" type="range" min="40" max="180" value="100" /><output id="tempo-value">100</output></label>
         </div>
       </div>
@@ -55,11 +61,20 @@ const els = {
   playLabel: document.querySelector("#play-label"),
   stop: document.querySelector("#stop"),
   rewind: document.querySelector("#rewind"),
+  mode: document.querySelector("#score-mode"),
   tempo: document.querySelector("#tempo"),
   tempoValue: document.querySelector("#tempo-value"),
   measureStatus: document.querySelector("#measure-status"),
   toolbar: document.querySelector(".toolbar"),
+  scoreFrame: document.querySelector(".score-frame"),
   progressCursor: document.querySelector("#progress-cursor"),
+};
+
+const FIXED_CURSOR_RATIO = 0.36;
+const FIXED_CURSOR_MIN_LEFT = 92;
+const SCORE_MODES = {
+  movingScore: "moving-score",
+  movingCursor: "moving-cursor",
 };
 
 els.score.addEventListener("click", (event) => {
@@ -67,7 +82,7 @@ els.score.addEventListener("click", (event) => {
   if (isPlaying) stopPlayback();
   const point = cursorTimeline.reduce((closest, candidate) => {
     const distance = Math.hypot(
-      event.pageX - candidate.x,
+      event.pageX - (candidate.x + currentScoreOffsetX),
       (event.pageY - candidate.y) * 1.8,
     );
     return distance < closest.distance ? { candidate, distance } : closest;
@@ -95,6 +110,11 @@ let progressAnimationFrame = 0;
 let playbackStartBeat = 0;
 let playbackStartDelay = 0.1;
 let playbackSecondsPerBeat = 0;
+let currentScoreOffsetX = 0;
+let currentScoreMode = SCORE_MODES.movingScore;
+let loadedScoreXml = "";
+let loadedScoreName = "";
+let resizeTimer = 0;
 
 els.file.addEventListener("change", async ({ target }) => {
   const file = target.files?.[0];
@@ -122,9 +142,7 @@ els.stop.addEventListener("click", stopPlayback);
 els.rewind.addEventListener("click", () => {
   stopPlayback();
   selectedStartBeat = 0;
-  osmd?.cursor.reset();
-  osmd?.cursor.show();
-  currentCursorPosition = 0;
+  setCursorPosition(0);
   setMeasure(0);
 });
 els.tempo.addEventListener("input", ({ target }) => {
@@ -132,37 +150,87 @@ els.tempo.addEventListener("input", ({ target }) => {
   Tone.Transport.bpm.value = Number(target.value);
 });
 
+els.mode.addEventListener("change", async ({ target }) => {
+  if (isPlaying) {
+    target.value = currentScoreMode;
+    return;
+  }
+  currentScoreMode = target.value;
+  if (!loadedScoreXml) return;
+  els.mode.disabled = true;
+  try {
+    await renderLoadedScore();
+  } finally {
+    els.mode.disabled = isPlaying;
+  }
+});
+
+window.addEventListener("resize", () => {
+  if (!scoreData || !cursorTimeline.length || !loadedScoreXml || isPlaying) return;
+  window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    renderLoadedScore();
+  }, 120);
+});
+
 async function loadScore(xml, name) {
   stopPlayback();
-  els.score.innerHTML = "";
-  osmd = new OpenSheetMusicDisplay(els.score, {
-    autoResize: true,
-    drawTitle: true,
-    drawingParameters: "default",
-    followCursor: false,
-    cursorsOptions: [{ type: 0, color: "#d45b46", alpha: 0, follow: false }],
-  });
-  await osmd.load(xml);
-  osmd.render();
-  osmd.cursor.reset();
-  osmd.cursor.show();
-  currentCursorPosition = 0;
+  loadedScoreXml = xml;
+  loadedScoreName = name;
   scoreData = parseMusicXml(xml);
-  cursorTimeline = buildCursorTimeline();
-  renderProgressCursor(0);
-  selectedStartBeat = 0;
+  if (!scoreData.measures.some((measure) => measure.notes.length)) {
+    throw new Error("Aucune note jouable trouvée dans le premier instrument");
+  }
   if (scoreData.tempo) {
     const tempo = Math.max(40, Math.min(180, Math.round(scoreData.tempo)));
     els.tempo.value = tempo;
     els.tempoValue.textContent = tempo;
   }
-  if (!scoreData.measures.some((measure) => measure.notes.length)) {
-    throw new Error("Aucune note jouable trouvée dans le premier instrument");
-  }
+  selectedStartBeat = 0;
+  await renderLoadedScore();
   els.empty.hidden = true;
   els.fileName.textContent = name;
   [els.play, els.stop, els.rewind].forEach((button) => { button.disabled = false; });
   setMeasure(0);
+}
+
+async function renderLoadedScore() {
+  if (!loadedScoreXml) return;
+  els.score.innerHTML = "";
+  resetScoreMotion();
+  els.scoreFrame.classList.toggle("is-moving-score", currentScoreMode === SCORE_MODES.movingScore);
+  osmd = new OpenSheetMusicDisplay(els.score, getOsmdOptions());
+  await osmd.load(loadedScoreXml);
+  osmd.render();
+  osmd.cursor.reset();
+  osmd.cursor.show();
+  currentCursorPosition = 0;
+  cursorTimeline = buildCursorTimeline();
+  const position = cursorTimeline.findIndex(({ time }) => time >= selectedStartBeat);
+  setCursorPosition(position < 0 ? 0 : position);
+  renderProgressCursor(selectedStartBeat);
+  els.fileName.textContent = loadedScoreName;
+}
+
+function getOsmdOptions() {
+  const options = {
+    autoResize: false,
+    drawTitle: true,
+    drawingParameters: "default",
+    followCursor: false,
+    cursorsOptions: [{ type: 0, color: "#d45b46", alpha: 0, follow: false }],
+  };
+  if (currentScoreMode === SCORE_MODES.movingCursor) {
+    options.autoResize = true;
+    return options;
+  }
+  return {
+    ...options,
+    newSystemFromNewPageInXML: false,
+    newSystemFromXML: false,
+    pageFormat: "Endless",
+    renderSingleHorizontalStaffline: true,
+  };
 }
 
 function parseMusicXml(xml) {
@@ -353,6 +421,7 @@ function setPlaying(value) {
     cancelAnimationFrame(progressAnimationFrame);
     progressAnimationFrame = 0;
   }
+  els.mode.disabled = value;
   els.toolbar.classList.toggle("is-floating", value);
   els.playLabel.textContent = value ? "Pause" : "Lire";
   els.play.querySelector("span").textContent = value ? "Ⅱ" : "▶";
@@ -390,7 +459,43 @@ function animateProgressCursor() {
 
 function renderProgressCursor(time) {
   if (!els.progressCursor || !cursorTimeline.length) return;
-  const frameBounds = document.querySelector(".score-frame").getBoundingClientRect();
+  const frameBounds = els.scoreFrame.getBoundingClientRect();
+  const frameLeft = frameBounds.left + window.scrollX;
+  const frameTop = frameBounds.top + window.scrollY;
+  const point = interpolateTimelinePoint(time);
+
+  if (currentScoreMode === SCORE_MODES.movingCursor) {
+    resetScoreMotion();
+    Object.assign(els.progressCursor.style, {
+      transform: `translate(${point.x - frameLeft}px, ${point.y - frameTop}px)`,
+      width: `${point.width}px`,
+      height: `${point.height}px`,
+    });
+    return;
+  }
+
+  const fixedLeft = Math.min(
+    Math.max(FIXED_CURSOR_MIN_LEFT, frameBounds.width * FIXED_CURSOR_RATIO),
+    Math.max(FIXED_CURSOR_MIN_LEFT, frameBounds.width - 42),
+  );
+  currentScoreOffsetX = frameLeft + fixedLeft - point.x;
+  els.score.style.transform = `translateX(${currentScoreOffsetX}px)`;
+
+  Object.assign(els.progressCursor.style, {
+    transform: `translate(${fixedLeft}px, ${point.y - frameTop}px)`,
+    width: `${point.width}px`,
+    height: `${point.height}px`,
+  });
+}
+
+function keepCursorVisible() {
+  const cursorElement = osmd?.cursor?.cursorElement;
+  if (!cursorElement) return;
+  const bounds = cursorElement.getBoundingClientRect();
+  keepBoundsVisible(bounds);
+}
+
+function interpolateTimelinePoint(time) {
   const first = cursorTimeline[0];
   const last = cursorTimeline[cursorTimeline.length - 1];
   let previous = first;
@@ -406,23 +511,18 @@ function renderProgressCursor(time) {
 
   const span = next.time - previous.time;
   const ratio = span > 0 ? Math.max(0, Math.min(1, (time - previous.time) / span)) : 0;
-  const left = previous.x + (next.x - previous.x) * ratio - (frameBounds.left + window.scrollX);
-  const top = previous.y + (next.y - previous.y) * ratio - (frameBounds.top + window.scrollY);
-  const height = previous.height + (next.height - previous.height) * ratio;
-  const width = Math.max(2, previous.width + (next.width - previous.width) * ratio);
 
-  Object.assign(els.progressCursor.style, {
-    transform: `translate(${left}px, ${top}px)`,
-    width: `${width}px`,
-    height: `${height}px`,
-  });
+  return {
+    x: previous.x + (next.x - previous.x) * ratio,
+    y: previous.y + (next.y - previous.y) * ratio,
+    width: Math.max(2, previous.width + (next.width - previous.width) * ratio),
+    height: previous.height + (next.height - previous.height) * ratio,
+  };
 }
 
-function keepCursorVisible() {
-  const cursorElement = osmd?.cursor?.cursorElement;
-  if (!cursorElement) return;
-  const bounds = cursorElement.getBoundingClientRect();
-  keepBoundsVisible(bounds);
+function resetScoreMotion() {
+  currentScoreOffsetX = 0;
+  els.score.style.transform = "translateX(0)";
 }
 
 function keepProgressCursorVisible() {

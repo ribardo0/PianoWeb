@@ -25,11 +25,16 @@ button { border: 0; font: inherit; cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .4; }
 .icon-button { padding: 7px; color: #77736b; background: transparent; font-size: 16px; }
 .play-button { display: flex; align-items: center; gap: 9px; padding: 9px 18px; border-radius: 4px; color: #fff; background: #ba4d3c; font-size: 13px; }
-.tempo-control { display: flex; align-items: center; gap: 8px; color: #8a857c; font: 11px "DM Mono", monospace; }
+.mode-control, .tempo-control { display: flex; align-items: center; gap: 8px; color: #8a857c; font: 11px "DM Mono", monospace; }
+.mode-control select { max-width: 150px; padding: 6px 24px 6px 8px; border: 1px solid #ded9d0; border-radius: 4px; color: #282622; background: #fffdf8; font: inherit; }
+.mode-control select:disabled { opacity: .45; }
 input[type="range"] { width: 90px; accent-color: #ba4d3c; }
 output { min-width: 25px; color: #282622; }
 .score-frame { position: relative; min-height: 540px; padding: 35px 24px; }
-#score { width: 100%; }
+.score-frame.is-moving-score { overflow: hidden; }
+#score { width: 100%; transform-origin: top left; }
+.score-frame.is-moving-score #score { width: max-content; min-width: 100%; will-change: transform; }
+.score-frame.is-moving-score #score svg { display: block; overflow: visible; }
 #progress-cursor { position: absolute; z-index: 2; top: 0; left: 0; background: linear-gradient(90deg, #d45b4600 0%, #d45b4652 18%, #d45b4652 82%, #d45b4600 100%); pointer-events: none; transform-origin: top left; }
 #empty-state { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; color: #9b968d; text-align: center; }
 #empty-state[hidden] { display: none; }
