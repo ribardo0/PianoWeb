@@ -98,6 +98,13 @@ const FIXED_CURSOR_MIN_LEFT = 92;
 const LOOP_COUNT_IN_BEATS = 2;
 // Half a beat of silence before the first count-in click so it is never clipped at the loop wrap.
 const LOOP_PRE_ROLL_MARGIN = 0.5;
+// Gaps between staves in staff-space units (OSMD defaults: 5, 7 and 4). Notes still never collide:
+// OSMD keeps at least MinSkyBottomDistBetweenStaves between one staff's notes and the next.
+const HORIZONTAL_BETWEEN_STAFF_DISTANCE = 2.5;
+const HORIZONTAL_STAFF_DISTANCE = 4;
+const HORIZONTAL_MIN_STAFF_LINE_DISTANCE = 2.5;
+const MIN_HORIZONTAL_ZOOM = 0.5;
+const HORIZONTAL_SCORE_VERTICAL_MARGIN = 12;
 const SCORE_MODES = {
   movingScore: "moving-score",
   movingCursor: "moving-cursor",
@@ -173,6 +180,7 @@ let playbackCursorMinBeat = 0;
 let playbackStartDelay = 0.1;
 let playbackSecondsPerBeat = 0;
 let currentScoreOffsetX = 0;
+let scoreSystemBounds = null;
 let currentScoreMode = SCORE_MODES.movingCursor;
 let loadedScoreXml = "";
 let resizeTimer = 0;
@@ -281,13 +289,21 @@ async function renderLoadedScore() {
   els.scoreFrame.classList.toggle("is-moving-score", currentScoreMode === SCORE_MODES.movingScore);
   osmd = new OpenSheetMusicDisplay(els.score, getOsmdOptions());
   await osmd.load(loadedScoreXml);
+  if (currentScoreMode === SCORE_MODES.movingScore) {
+    osmd.EngravingRules.BetweenStaffDistance = HORIZONTAL_BETWEEN_STAFF_DISTANCE;
+    osmd.EngravingRules.StaffDistance = HORIZONTAL_STAFF_DISTANCE;
+    osmd.EngravingRules.MinimumStaffLineDistance = HORIZONTAL_MIN_STAFF_LINE_DISTANCE;
+  }
   osmd.render();
+  if (currentScoreMode === SCORE_MODES.movingScore) fitScoreToViewportHeight();
+  scoreSystemBounds = currentScoreMode === SCORE_MODES.movingScore ? getScoreSystemBounds() : null;
   osmd.cursor.reset();
   osmd.cursor.show();
   currentCursorPosition = 0;
   cursorTimeline = buildCursorTimeline();
   const position = cursorTimeline.findIndex(({ time }) => time >= selectedStartBeat);
   setCursorPosition(position < 0 ? 0 : position);
+  keepScoreSystemVisible({ center: true });
   renderProgressCursor(selectedStartBeat);
   renderLoopMarkers();
 }
@@ -311,6 +327,69 @@ function getOsmdOptions() {
     pageFormat: "Endless",
     renderSingleHorizontalStaffline: true,
   };
+}
+
+// Vertical extent, in page pixels, of everything drawn around the system (ledger-line notes,
+// dynamics, fingerings, lyrics, slurs, pedal marks, tempo text...) except the title block,
+// which may scroll out of view during playback.
+function getScoreSystemBounds() {
+  const svg = els.score.querySelector("svg");
+  if (!svg) return null;
+  const sheet = osmd?.GraphicSheet;
+  const titleLabels = [sheet?.Title, sheet?.Subtitle, sheet?.Composer, sheet?.Lyricist, sheet?.Copyright]
+    .filter(Boolean);
+  const titleNodes = titleLabels.map((label) => label.SVGNode).filter(Boolean);
+  const titleTexts = new Set(titleLabels.flatMap((label) =>
+    (label.Label?.text || "").split("\n").map((line) => line.trim()).filter(Boolean),
+  ));
+  const isTitleElement = (element) =>
+    titleNodes.some((node) => node === element || node.contains(element))
+    || (element.tagName === "text" && titleTexts.has(element.textContent.trim()));
+
+  let top = Infinity;
+  let bottom = -Infinity;
+  svg.querySelectorAll("path, text, rect, line, polyline, polygon, ellipse, circle, image, use")
+    .forEach((element) => {
+      if (isTitleElement(element)) return;
+      const bounds = element.getBoundingClientRect();
+      if (!bounds.width && !bounds.height) return;
+      top = Math.min(top, bounds.top);
+      bottom = Math.max(bottom, bounds.bottom);
+    });
+  if (!Number.isFinite(top) || !Number.isFinite(bottom)) return null;
+  return { top: top + window.scrollY, bottom: bottom + window.scrollY };
+}
+
+function getVisibleScoreArea() {
+  const top = els.toolbar.offsetHeight;
+  return { top, height: Math.max(0, window.innerHeight - top) };
+}
+
+// Shrinks the horizontal score so the whole system fits below the fixed toolbar on short screens.
+function fitScoreToViewportHeight() {
+  // Two passes: text and spacing do not always scale exactly linearly with the zoom.
+  for (let pass = 0; pass < 2; pass += 1) {
+    const bounds = getScoreSystemBounds();
+    if (!bounds) return;
+    const systemHeight = bounds.bottom - bounds.top;
+    const availableHeight = getVisibleScoreArea().height - HORIZONTAL_SCORE_VERTICAL_MARGIN * 2;
+    if (systemHeight <= availableHeight || availableHeight <= 0 || osmd.Zoom <= MIN_HORIZONTAL_ZOOM) return;
+    osmd.Zoom = Math.max(MIN_HORIZONTAL_ZOOM, osmd.Zoom * (availableHeight / systemHeight));
+    osmd.render();
+  }
+}
+
+function keepScoreSystemVisible({ center = false } = {}) {
+  if (!scoreSystemBounds) return false;
+  const visible = getVisibleScoreArea();
+  const visibleTop = window.scrollY + visible.top;
+  const visibleBottom = window.scrollY + window.innerHeight;
+  const isVisible = scoreSystemBounds.top >= visibleTop && scoreSystemBounds.bottom <= visibleBottom;
+  if (isVisible && !center) return true;
+  const systemHeight = scoreSystemBounds.bottom - scoreSystemBounds.top;
+  const target = scoreSystemBounds.top - visible.top - Math.max(0, (visible.height - systemHeight) / 2);
+  window.scrollTo({ top: Math.max(0, target), behavior: "auto" });
+  return true;
 }
 
 function parseMusicXml(xml) {
@@ -852,6 +931,7 @@ function keepProgressCursorVisible() {
 }
 
 function keepBoundsVisible(bounds) {
+  if (currentScoreMode === SCORE_MODES.movingScore && keepScoreSystemVisible()) return;
   if (!bounds.height) return;
   const margin = Math.min(window.innerHeight * 0.25, 180);
   const isOutsideViewport = bounds.top < margin || bounds.bottom > window.innerHeight - margin;
