@@ -730,12 +730,13 @@ function renderProgressCursor(time) {
   const frameLeft = frameBounds.left + window.scrollX;
   const frameTop = frameBounds.top + window.scrollY;
   const point = interpolateTimelinePoint(time);
+  const markerWidth = point.width;
 
   if (currentScoreMode === SCORE_MODES.movingCursor) {
     resetScoreMotion();
     Object.assign(els.progressCursor.style, {
-      transform: `translate(${point.x - frameLeft}px, ${point.y - frameTop}px)`,
-      width: `${point.width}px`,
+      transform: `translate(${point.x - markerWidth / 2 - frameLeft}px, ${point.y - frameTop}px)`,
+      width: `${markerWidth}px`,
       height: `${point.height}px`,
     });
     renderLoopMarkers();
@@ -750,8 +751,8 @@ function renderProgressCursor(time) {
   els.score.style.transform = `translateX(${currentScoreOffsetX}px)`;
 
   Object.assign(els.progressCursor.style, {
-    transform: `translate(${fixedLeft}px, ${point.y - frameTop}px)`,
-    width: `${point.width}px`,
+    transform: `translate(${fixedLeft - markerWidth / 2}px, ${point.y - frameTop}px)`,
+    width: `${markerWidth}px`,
     height: `${point.height}px`,
   });
   renderLoopMarkers();
