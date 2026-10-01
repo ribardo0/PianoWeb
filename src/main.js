@@ -95,6 +95,9 @@ syncToolbarHeight();
 
 const FIXED_CURSOR_RATIO = 0.36;
 const FIXED_CURSOR_MIN_LEFT = 92;
+const LOOP_COUNT_IN_BEATS = 2;
+// Half a beat of silence before the first count-in click so it is never clipped at the loop wrap.
+const LOOP_PRE_ROLL_MARGIN = 0.5;
 const SCORE_MODES = {
   movingScore: "moving-score",
   movingCursor: "moving-cursor",
@@ -157,6 +160,7 @@ els.scoreFrame.addEventListener("pointermove", (event) => {
 let osmd;
 let scoreData;
 let piano;
+let countInClick;
 let pianoReady;
 let scheduledEvents = [];
 let cursorTimeline = [];
@@ -165,6 +169,7 @@ let selectedStartBeat = 0;
 let isPlaying = false;
 let progressAnimationFrame = 0;
 let playbackStartBeat = 0;
+let playbackCursorMinBeat = 0;
 let playbackStartDelay = 0.1;
 let playbackSecondsPerBeat = 0;
 let currentScoreOffsetX = 0;
@@ -321,9 +326,13 @@ function parseMusicXml(xml) {
   ) || null;
   const measureNotes = Array.from({ length: measureCount }, () => []);
   const measureLengths = Array(measureCount).fill(0);
+  const measureBeatLengths = Array(measureCount).fill(1);
+  const measureNominalLengths = Array(measureCount).fill(null);
 
   parts.forEach((part, partIndex) => {
     let divisions = 1;
+    let beatLength = 1;
+    let nominalLength = null;
     const activeTies = new Map();
 
     partMeasures[partIndex].forEach((measure, index) => {
@@ -334,6 +343,13 @@ function parseMusicXml(xml) {
         if (element.tagName === "attributes") {
           const nextDivisions = Number(element.querySelector("divisions")?.textContent);
           if (nextDivisions > 0) divisions = nextDivisions;
+          const beats = Number(element.querySelector("time > beats")?.textContent);
+          const beatType = Number(element.querySelector("time > beat-type")?.textContent);
+          if (beats > 0 && beatType > 0) {
+            const compound = beatType >= 8 && beats > 3 && beats % 3 === 0;
+            beatLength = (4 / beatType) * (compound ? 3 : 1);
+            nominalLength = beats * (4 / beatType);
+          }
           return;
         }
         if (element.tagName === "backup" || element.tagName === "forward") {
@@ -367,6 +383,10 @@ function parseMusicXml(xml) {
         measureLength = Math.max(measureLength, cursor);
       });
       measureLengths[index] = Math.max(measureLengths[index], measureLength, 1);
+      if (partIndex === 0) {
+        measureBeatLengths[index] = beatLength;
+        measureNominalLengths[index] = nominalLength;
+      }
     });
   });
 
@@ -375,7 +395,9 @@ function parseMusicXml(xml) {
     const start = time;
     const notes = measureNotes[index].map((note) => ({ ...note, time: start + note.time }));
     time += length;
-    return { index, start, length, notes };
+    const nominalLength = measureNominalLengths[index];
+    const isPickup = index === 0 && nominalLength !== null && length < nominalLength - 1e-6;
+    return { index, start, length, notes, beatLength: measureBeatLengths[index], isPickup };
   });
   return { measures: events, duration: time, tempo };
 }
@@ -400,7 +422,27 @@ function schedulePlayback(startBeat = 0) {
   const loopEnabled = hasLoop();
   const regionEndBeat = loopEnabled ? loopEndBeat : scoreData.duration;
   const regionStartBeat = loopEnabled ? loopStartBeat : startBeat;
-  const playbackDuration = Math.max(0, regionEndBeat - regionStartBeat);
+  // Every start (and every loop wrap) plays a count-in on the last LOOP_COUNT_IN_BEATS
+  // measure beats preceding the start; the cursor waits on the start note meanwhile.
+  const countInBeats = getCountInBeats(regionStartBeat, LOOP_COUNT_IN_BEATS);
+  const timelineStartBeat = countInBeats.length
+    ? countInBeats[0].time - countInBeats[0].beatLength * LOOP_PRE_ROLL_MARGIN
+    : regionStartBeat;
+  const playbackDuration = Math.max(0, regionEndBeat - timelineStartBeat);
+  const beatToTransport = (beat) => startDelay + (beat - timelineStartBeat) * secondsPerBeat;
+
+  const startMeasure = scoreData.measures.find((item) => regionStartBeat >= item.start && regionStartBeat < item.start + item.length)
+    ?? scoreData.measures[0];
+  if (startMeasure) {
+    Tone.Transport.schedule((audioTime) => {
+      Tone.Draw.schedule(() => setMeasure(startMeasure.index), audioTime);
+    }, startDelay);
+  }
+  countInBeats.forEach(({ time: beatTime }) => {
+    Tone.Transport.schedule((time) => {
+      getCountInClick().triggerAttackRelease("C6", 0.05, time);
+    }, beatToTransport(beatTime));
+  });
 
   scoreData.measures.forEach((measure) => {
     measure.notes.forEach((note) => {
@@ -413,18 +455,19 @@ function schedulePlayback(startBeat = 0) {
           (noteEnd - noteStart) * secondsPerBeat,
           time,
         );
-      }, startDelay + (noteStart - regionStartBeat) * secondsPerBeat));
+      }, beatToTransport(noteStart)));
     });
     if (measure.start >= regionStartBeat && measure.start < regionEndBeat) {
       Tone.Transport.schedule((audioTime) => {
         Tone.Draw.schedule(() => setMeasure(measure.index), audioTime);
-      }, startDelay + (measure.start - regionStartBeat) * secondsPerBeat);
+      }, beatToTransport(measure.start));
     }
   });
   Tone.Transport.loop = loopEnabled;
   Tone.Transport.loopStart = startDelay;
   Tone.Transport.loopEnd = startDelay + playbackDuration * secondsPerBeat;
-  playbackStartBeat = regionStartBeat;
+  playbackStartBeat = timelineStartBeat;
+  playbackCursorMinBeat = regionStartBeat;
   playbackStartDelay = startDelay;
   playbackSecondsPerBeat = secondsPerBeat;
   if (!loopEnabled) {
@@ -437,6 +480,46 @@ function schedulePlayback(startBeat = 0) {
       }, audioTime);
     }, startDelay + playbackDuration * secondsPerBeat);
   }
+}
+
+// Returns the last `count` metric beats of the measures strictly before `beat`,
+// extending before the score start when needed.
+function getCountInBeats(beat, count) {
+  const epsilon = 1e-6;
+  const grid = [];
+  for (let i = scoreData.measures.length - 1; i >= 0 && grid.length < count; i -= 1) {
+    const measure = scoreData.measures[i];
+    if (measure.start >= beat - epsilon) continue;
+    const step = measure.beatLength || 1;
+    const measureBeats = [];
+    if (measure.isPickup) {
+      for (let t = measure.start + measure.length - step; t >= measure.start - epsilon; t -= step) measureBeats.push(t);
+    } else {
+      const lastIndex = Math.ceil((measure.length - epsilon) / step) - 1;
+      for (let k = lastIndex; k >= 0; k -= 1) measureBeats.push(measure.start + k * step);
+    }
+    measureBeats.forEach((t) => {
+      if (grid.length < count && t < beat - epsilon) grid.push({ time: t, beatLength: step });
+    });
+  }
+  const firstStep = scoreData.measures[0]?.beatLength || 1;
+  let previous = grid.length ? grid[grid.length - 1].time : Math.min(beat, scoreData.measures[0]?.start ?? 0);
+  while (grid.length < count) {
+    previous -= firstStep;
+    grid.push({ time: previous, beatLength: firstStep });
+  }
+  return grid.reverse();
+}
+
+function getCountInClick() {
+  if (!countInClick) {
+    countInClick = new Tone.Synth({
+      oscillator: { type: "sine" },
+      envelope: { attack: 0.002, decay: 0.05, sustain: 0, release: 0.03 },
+      volume: -18,
+    }).toDestination();
+  }
+  return countInClick;
 }
 
 async function startPlayback(startBeat = 0) {
@@ -630,11 +713,12 @@ function setCursorPosition(position) {
 function animateProgressCursor() {
   if (!isPlaying) return;
   const elapsedSeconds = Math.max(0, Tone.Transport.seconds - playbackStartDelay);
-  const loopDuration = hasLoop() ? loopEndBeat - loopStartBeat : 0;
-  const currentBeat = hasLoop() && loopDuration > 0
-    ? loopStartBeat + (elapsedSeconds / playbackSecondsPerBeat) % loopDuration
-    : playbackStartBeat + elapsedSeconds / playbackSecondsPerBeat;
-  selectedStartBeat = Math.min(currentBeat, scoreData.duration);
+  // During the loop count-in, the cursor waits on the first note of the loop.
+  const currentBeat = Math.max(
+    playbackCursorMinBeat,
+    playbackStartBeat + elapsedSeconds / playbackSecondsPerBeat,
+  );
+  selectedStartBeat = Math.max(0, Math.min(currentBeat, scoreData.duration));
   renderProgressCursor(currentBeat);
   keepProgressCursorVisible();
   progressAnimationFrame = requestAnimationFrame(animateProgressCursor);
