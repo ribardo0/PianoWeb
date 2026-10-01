@@ -36,7 +36,7 @@ input[type="range"] { width: 90px; accent-color: #ba4d3c; }
 input[type="range"]:disabled { opacity: .45; }
 output { min-width: 25px; color: #282622; }
 .score-frame { position: relative; min-height: 540px; padding: 35px 24px; }
-.score-frame.is-moving-score { overflow: hidden; }
+.score-frame.is-moving-score { overflow: hidden; touch-action: pan-y pinch-zoom; }
 #score { width: 100%; transform-origin: top left; }
 .score-frame.is-moving-score #score { width: max-content; min-width: 100%; will-change: transform; }
 .score-frame.is-moving-score #score svg { display: block; overflow: visible; }

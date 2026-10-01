@@ -101,6 +101,10 @@ const SCORE_MODES = {
 };
 
 els.score.addEventListener("click", (event) => {
+  if (suppressNextScoreClick) {
+    suppressNextScoreClick = false;
+    return;
+  }
   if (!scoreData || !cursorTimeline.length) return;
   if (isPlaying) stopPlayback();
   const point = cursorTimeline.reduce((closest, candidate) => {
@@ -118,6 +122,36 @@ els.score.addEventListener("click", (event) => {
     );
     if (measure) setMeasure(measure.index);
   }
+});
+
+els.scoreFrame.addEventListener("wheel", (event) => {
+  if (currentScoreMode !== SCORE_MODES.movingScore || !cursorTimeline.length || isPlaying) return;
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+  if (!delta) return;
+  event.preventDefault();
+  const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? els.scoreFrame.clientWidth : 1;
+  scrollScoreBy(delta * scale);
+}, { passive: false });
+
+let touchDrag = null;
+let suppressNextScoreClick = false;
+els.scoreFrame.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "mouse" || currentScoreMode !== SCORE_MODES.movingScore || !cursorTimeline.length || isPlaying) return;
+  touchDrag = { id: event.pointerId, lastX: event.clientX, startX: event.clientX, moved: false };
+});
+els.scoreFrame.addEventListener("pointermove", (event) => {
+  if (!touchDrag || event.pointerId !== touchDrag.id) return;
+  if (!touchDrag.moved && Math.abs(event.clientX - touchDrag.startX) < 8) return;
+  touchDrag.moved = true;
+  scrollScoreBy(touchDrag.lastX - event.clientX);
+  touchDrag.lastX = event.clientX;
+});
+["pointerup", "pointercancel"].forEach((type) => {
+  els.scoreFrame.addEventListener(type, (event) => {
+    if (!touchDrag || event.pointerId !== touchDrag.id) return;
+    suppressNextScoreClick = touchDrag.moved && type === "pointerup";
+    touchDrag = null;
+  });
 });
 
 let osmd;
@@ -697,6 +731,28 @@ function interpolateTimelinePoint(time) {
     width: Math.max(2, previous.width + (next.width - previous.width) * ratio),
     height: previous.height + (next.height - previous.height) * ratio,
   };
+}
+
+function scrollScoreBy(delta) {
+  const frameBounds = els.scoreFrame.getBoundingClientRect();
+  const frameLeft = frameBounds.left + window.scrollX;
+  const fixedLeft = Math.min(
+    Math.max(FIXED_CURSOR_MIN_LEFT, frameBounds.width * FIXED_CURSOR_RATIO),
+    Math.max(FIXED_CURSOR_MIN_LEFT, frameBounds.width - 42),
+  );
+  const xs = cursorTimeline.map((point) => point.x);
+  const maxOffset = frameLeft + fixedLeft - Math.min(...xs);
+  const minOffset = frameLeft + fixedLeft - Math.max(...xs);
+  const nextOffset = Math.max(minOffset, Math.min(maxOffset, currentScoreOffsetX - delta));
+  const appliedDelta = nextOffset - currentScoreOffsetX;
+  if (!appliedDelta) return;
+  currentScoreOffsetX = nextOffset;
+  els.score.style.transform = `translateX(${currentScoreOffsetX}px)`;
+  const cursorMatch = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(els.progressCursor?.style.transform || "");
+  if (cursorMatch) {
+    els.progressCursor.style.transform = `translate(${Number(cursorMatch[1]) + appliedDelta}px, ${cursorMatch[2]}px)`;
+  }
+  renderLoopMarkers();
 }
 
 function resetScoreMotion() {
