@@ -87,6 +87,12 @@ const els = {
   loopEndMarker: document.querySelector("#loop-end-marker"),
 };
 
+const syncToolbarHeight = () => {
+  document.documentElement.style.setProperty("--toolbar-height", `${els.toolbar.offsetHeight}px`);
+};
+new ResizeObserver(syncToolbarHeight).observe(els.toolbar);
+syncToolbarHeight();
+
 const FIXED_CURSOR_RATIO = 0.36;
 const FIXED_CURSOR_MIN_LEFT = 92;
 const SCORE_MODES = {
