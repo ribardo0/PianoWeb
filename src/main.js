@@ -21,10 +21,6 @@ app.innerHTML = `
 
     <section class="workspace">
       <div class="toolbar">
-        <div class="file-status">
-          <span class="status-dot"></span>
-          <span id="file-name">Aucune partition chargée</span>
-        </div>
         <div class="controls">
           <button id="rewind" class="icon-button" title="Revenir au début" disabled>↶</button>
           <form id="measure-jump-form" class="measure-control">
@@ -67,7 +63,6 @@ app.innerHTML = `
 
 const els = {
   file: document.querySelector("#file-input"),
-  fileName: document.querySelector("#file-name"),
   score: document.querySelector("#score"),
   empty: document.querySelector("#empty-state"),
   play: document.querySelector("#play"),
@@ -135,7 +130,6 @@ let playbackSecondsPerBeat = 0;
 let currentScoreOffsetX = 0;
 let currentScoreMode = SCORE_MODES.movingCursor;
 let loadedScoreXml = "";
-let loadedScoreName = "";
 let resizeTimer = 0;
 let currentMeasureIndex = 0;
 let loopStartBeat = null;
@@ -146,7 +140,7 @@ els.file.addEventListener("change", async ({ target }) => {
   if (!file) return;
   try {
     const xml = await file.text();
-    await loadScore(xml, file.name);
+    await loadScore(xml);
   } catch (error) {
     els.measureStatus.textContent = "Impossible de lire ce fichier";
     console.error(error);
@@ -211,10 +205,9 @@ window.addEventListener("resize", () => {
   }, 120);
 });
 
-async function loadScore(xml, name) {
+async function loadScore(xml) {
   stopPlayback();
   loadedScoreXml = xml;
-  loadedScoreName = name;
   scoreData = parseMusicXml(xml);
   if (!scoreData.measures.some((measure) => measure.notes.length)) {
     throw new Error("Aucune note jouable trouvée dans le fichier");
@@ -228,7 +221,6 @@ async function loadScore(xml, name) {
   clearLoop();
   await renderLoadedScore();
   els.empty.hidden = true;
-  els.fileName.textContent = name;
   [els.play, els.stop, els.rewind, els.measureJump, els.measureJumpButton, els.loopStart, els.loopEnd].forEach((control) => {
     control.disabled = false;
   });
@@ -253,7 +245,6 @@ async function renderLoadedScore() {
   setCursorPosition(position < 0 ? 0 : position);
   renderProgressCursor(selectedStartBeat);
   renderLoopMarkers();
-  els.fileName.textContent = loadedScoreName;
 }
 
 function getOsmdOptions() {
@@ -487,6 +478,9 @@ function setPlaying(value) {
     progressAnimationFrame = 0;
   }
   els.mode.disabled = value;
+  els.tempo.disabled = value;
+  els.measureJump.disabled = value || !scoreData;
+  els.measureJumpButton.disabled = value || !scoreData;
   els.toolbar.classList.toggle("is-floating", value);
   els.playLabel.textContent = value ? "Pause" : "Lire";
   els.play.querySelector("span").textContent = value ? "Ⅱ" : "▶";

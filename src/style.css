@@ -17,14 +17,11 @@ h1 em { color: #ba4d3c; font-style: italic; }
 .dropzone input { display: none; }
 .workspace { overflow: hidden; padding-top: 67px; border: 1px solid #ded9d0; border-radius: 7px; background: #fcfbf8; box-shadow: 0 12px 40px #514a3c0d; }
 .toolbar { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; display: flex; justify-content: space-between; align-items: center; gap: 20px; min-height: 67px; padding: 16px max(22px, calc((100vw - 1172px) / 2)); border-bottom: 1px solid #e6e1d8; background: #f8f6f1; box-shadow: 0 4px 12px #514a3c12; }
-.file-status, .controls { display: flex; align-items: center; gap: 12px; }
-.file-status { color: #77736b; font: 12px "DM Mono", monospace; }
-.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #c2beb5; }
-.controls { flex-wrap: wrap; }
+.controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 button { border: 0; font: inherit; cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .4; }
 .icon-button { padding: 7px; color: #77736b; background: transparent; font-size: 16px; }
-.play-button { display: flex; align-items: center; gap: 9px; padding: 9px 18px; border-radius: 4px; color: #fff; background: #ba4d3c; font-size: 13px; }
+.play-button { display: flex; flex: 0 0 100px; align-items: center; justify-content: center; gap: 9px; width: 100px; padding: 9px 18px; border-radius: 4px; color: #fff; background: #ba4d3c; font-size: 13px; white-space: nowrap; }
 .mode-control, .tempo-control, .measure-control { display: flex; align-items: center; gap: 8px; color: #8a857c; font: 11px "DM Mono", monospace; }
 .mode-control select { max-width: 150px; padding: 6px 24px 6px 8px; border: 1px solid #ded9d0; border-radius: 4px; color: #282622; background: #fffdf8; font: inherit; }
 .mode-control select:disabled { opacity: .45; }
@@ -36,6 +33,7 @@ button:disabled { cursor: not-allowed; opacity: .4; }
 .loop-controls button.is-set { border-color: #ba4d3c; color: #9e3f31; background: #fcedea; }
 .loop-controls #clear-loop { color: #9a584e; }
 input[type="range"] { width: 90px; accent-color: #ba4d3c; }
+input[type="range"]:disabled { opacity: .45; }
 output { min-width: 25px; color: #282622; }
 .score-frame { position: relative; min-height: 540px; padding: 35px 24px; }
 .score-frame.is-moving-score { overflow: hidden; }
