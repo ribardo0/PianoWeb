@@ -217,7 +217,7 @@ async function loadScore(xml, name) {
   loadedScoreName = name;
   scoreData = parseMusicXml(xml);
   if (!scoreData.measures.some((measure) => measure.notes.length)) {
-    throw new Error("Aucune note jouable trouvée dans le premier instrument");
+    throw new Error("Aucune note jouable trouvée dans le fichier");
   }
   if (scoreData.tempo) {
     const tempo = Math.max(40, Math.min(180, Math.round(scoreData.tempo)));
@@ -282,61 +282,69 @@ function parseMusicXml(xml) {
   const parseError = doc.querySelector("parsererror");
   if (parseError) throw new Error("XML invalide");
   const parts = [...doc.querySelectorAll("part")];
-  const measures = [...(parts[0]?.querySelectorAll(":scope > measure") ?? [])];
+  const partMeasures = parts.map((part) => [...part.querySelectorAll(":scope > measure")]);
+  const measureCount = Math.max(0, ...partMeasures.map((measures) => measures.length));
   const tempo = Number(
     doc.querySelector("sound[tempo]")?.getAttribute("tempo")
     || doc.querySelector("per-minute")?.textContent,
   ) || null;
-  let divisions = 1;
-  const events = [];
-  const activeTies = new Map();
-  let time = 0;
-  measures.forEach((measure, index) => {
-    const measureEvents = [];
-    const measureStart = time;
-    let cursor = 0;
-    let lastNoteStart = 0;
-    let measureLength = 0;
-    [...measure.children].forEach((element) => {
-      if (element.tagName === "attributes") {
-        const nextDivisions = Number(element.querySelector("divisions")?.textContent);
-        if (nextDivisions > 0) divisions = nextDivisions;
-        return;
-      }
-      if (element.tagName === "backup" || element.tagName === "forward") {
-        const amount = (Number(element.querySelector("duration")?.textContent) || 0) / divisions;
-        cursor += element.tagName === "backup" ? -amount : amount;
-        if (cursor < 0) cursor = 0;
-        return;
-      }
-      if (element.tagName !== "note") return;
+  const measureNotes = Array.from({ length: measureCount }, () => []);
+  const measureLengths = Array(measureCount).fill(0);
 
-      const duration = (Number(element.querySelector("duration")?.textContent) || divisions) / divisions;
-      const start = element.querySelector("chord") ? lastNoteStart : cursor;
-      const rest = element.querySelector("rest");
-      const pitch = rest ? null : toMidi(element.querySelector("pitch"));
-      if (pitch !== null) {
-        const absoluteStart = measureStart + start;
-        const tieTypes = [...element.querySelectorAll("tie")].map((tie) => tie.getAttribute("type"));
-        const tieKey = `${element.querySelector("voice")?.textContent || "1"}:${pitch}`;
-        const continuedNote = activeTies.get(tieKey);
+  parts.forEach((part, partIndex) => {
+    let divisions = 1;
+    const activeTies = new Map();
 
-        if (continuedNote && tieTypes.includes("stop")) {
-          continuedNote.duration += duration;
-          if (!tieTypes.includes("start")) activeTies.delete(tieKey);
-        } else {
-          const noteEvent = { pitch, time: absoluteStart, duration };
-          measureEvents.push(noteEvent);
-          if (tieTypes.includes("start")) activeTies.set(tieKey, noteEvent);
+    partMeasures[partIndex].forEach((measure, index) => {
+      let cursor = 0;
+      let lastNoteStart = 0;
+      let measureLength = 0;
+      [...measure.children].forEach((element) => {
+        if (element.tagName === "attributes") {
+          const nextDivisions = Number(element.querySelector("divisions")?.textContent);
+          if (nextDivisions > 0) divisions = nextDivisions;
+          return;
         }
-      }
-      lastNoteStart = start;
-      if (!element.querySelector("chord")) cursor += duration;
-      measureLength = Math.max(measureLength, cursor);
+        if (element.tagName === "backup" || element.tagName === "forward") {
+          const amount = (Number(element.querySelector("duration")?.textContent) || 0) / divisions;
+          cursor += element.tagName === "backup" ? -amount : amount;
+          if (cursor < 0) cursor = 0;
+          return;
+        }
+        if (element.tagName !== "note") return;
+
+        const duration = (Number(element.querySelector("duration")?.textContent) || divisions) / divisions;
+        const start = element.querySelector("chord") ? lastNoteStart : cursor;
+        const rest = element.querySelector("rest");
+        const pitch = rest ? null : toMidi(element.querySelector("pitch"));
+        if (pitch !== null) {
+          const tieTypes = [...element.querySelectorAll("tie")].map((tie) => tie.getAttribute("type"));
+          const tieKey = `${element.querySelector("voice")?.textContent || "1"}:${pitch}`;
+          const continuedNote = activeTies.get(tieKey);
+
+          if (continuedNote && tieTypes.includes("stop")) {
+            continuedNote.duration += duration;
+            if (!tieTypes.includes("start")) activeTies.delete(tieKey);
+          } else {
+            const noteEvent = { pitch, time: start, duration };
+            measureNotes[index].push(noteEvent);
+            if (tieTypes.includes("start")) activeTies.set(tieKey, noteEvent);
+          }
+        }
+        lastNoteStart = start;
+        if (!element.querySelector("chord")) cursor += duration;
+        measureLength = Math.max(measureLength, cursor);
+      });
+      measureLengths[index] = Math.max(measureLengths[index], measureLength, 1);
     });
-    const length = Math.max(measureLength, 1);
-    events.push({ index, start: measureStart, length, notes: measureEvents });
+  });
+
+  let time = 0;
+  const events = measureLengths.map((length, index) => {
+    const start = time;
+    const notes = measureNotes[index].map((note) => ({ ...note, time: start + note.time }));
     time += length;
+    return { index, start, length, notes };
   });
   return { measures: events, duration: time, tempo };
 }
